@@ -1,0 +1,44 @@
+[build-system]
+requires = [
+    "hatchling",
+    "hatch-vcs"
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "newport-smc100"
+version = "0.0.1"
+authors = [
+  { name="John Houlihan", email="houlihaj@uci.edu" },
+]
+description = "A Python API for the Newport SMC100CC & SMC100PP Single-Axis Motion Controller/Driver for DC or Stepper Motor."
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "pyserial >= 3.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/houlihaj/newport-smc100"
+Issues = "https://github.com/houlihaj/newport-smc100/issues"
+
+# https://hatch.pypa.io/latest/config/metadata/
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests"]
+
+[tool.coverage.run]
+source = ["src/newport_smc100"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/newport_smc100"]
