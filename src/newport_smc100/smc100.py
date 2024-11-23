@@ -43,6 +43,19 @@ class HomeSearchType(Enum):
     EOR_ONLY = 4
 
 
+class PositionerErrorCode(Enum):
+    NEGATIVE_END_OF_RUN = 1
+    POSITIVE_END_OF_RUN = 2
+    PEAK_CURRENT_LIMIT = 4
+    RMS_CURRENT_LIMIT = 8
+    SHORT_CIRCUIT_DETECTION = 16
+    FOLLOWING_ERROR = 32
+    HOMING_TIME_OUT = 64
+    WRONG_ESP_STAGE = 128
+    DC_VOLTAGE_TOO_LOW = 256
+    EIGHTY_WATT_OUTPUT_POWER_EXCEEDED = 512
+
+
 class ControllerState(Enum):
     INVALID = ""
     NOT_REFERENCED_RESET = "0A"
@@ -51,7 +64,7 @@ class ControllerState(Enum):
     NOT_REFERENCED_DISABLE = "0D"
     NOT_REFERENCED_READY = "0E"
     NOT_REFERENCED_MOVING = "0F"
-    NOT_REFERENCED_ESP = "10"
+    NOT_REFERENCED_ESP = "10"  # stage error
     NOT_REFERENCED_JOGGING = "11"
     CONFIGURATION = "14"
     HOMING = "1E"
@@ -229,6 +242,21 @@ class SMC100:
         self.get_controller_status()
         return self.controller_state
 
+    def get_positioner_errors_readable(self, error_code: int) -> list[str]:
+        """
+        Get the positioner errors is a human-readable format
+
+        :param error_code:
+        :type error_code: int
+        :return: positioner errors is a human-readable format
+        :rtype: list[str]
+        """
+        positioner_errors_readable: list[str] = []
+        for bit_mask in PositionerErrorCode:
+            if bit_mask.value & error_code != 0:
+                positioner_errors_readable.append(bit_mask.name)
+        return positioner_errors_readable
+
     def is_ready(self) -> bool:
         """
         Query the controller to see if the actuator is ready for motion control.
@@ -238,7 +266,10 @@ class SMC100:
         """
         controller_state: ControllerState = self.get_controller_state()
         if controller_state in [
-            ControllerState.READY_HOMING, ControllerState.READY_MOVING, ControllerState.READY_JOGGING
+            ControllerState.READY_HOMING,
+            ControllerState.READY_MOVING,
+            ControllerState.READY_DISABLE,
+            ControllerState.READY_JOGGING
         ]:
             ready: bool = True
         else:
@@ -271,6 +302,7 @@ class SMC100:
         """
         self.write(command=f"HT{search_type.value}")  # set HOME search type
         self.execute_home_search()
+        time.sleep(1.0)  # to mimic LabView example from Newport
 
     @logging_decorator
     def is_homing(self) -> bool:
@@ -300,21 +332,25 @@ class SMC100:
 
         :return: None
         """
-        max_travel_distance: int = 12  # units of millimeters (mm)
-        velocity: float = self.get_velocity()  # units of millimeters per second (mm/s)
-        max_travel_time: float = max_travel_distance / velocity  # units of seconds (s)
-        timeout: float = 2 * max_travel_time  # make the timeout twice the max_travel_time
+        # max_travel_distance: int = 12  # units of millimeters (mm)
+        # velocity: float = self.get_velocity()  # units of millimeters per second (mm/s)
+        # max_travel_time: float = max_travel_distance / velocity  # units of seconds (s)
+        # timeout: float = 2 * max_travel_time  # make the timeout twice the max_travel_time
+
+        timeout: float = 10
+
         runtime: float = 0
         start_time: float = time.monotonic()
         count: int = 0
-        homing: bool = self.is_homing()
+        # homing: bool = self.is_homing()
+        homing: bool = True
         while homing is True and runtime < timeout:
-            if count % 2 == 0:
+            if count % 10 == 0:
                 logging.info(f"Is homing? : {homing}")
             runtime: float = time.monotonic() - start_time
-            count += 1
-            time.sleep(2)
             homing: bool = self.is_homing()
+            time.sleep(0.2)
+            count += 1
         logging.info(f"Is homing? : {homing}")
         if runtime >= timeout:
             raise InstrumentException("[EXCEPTION] wait_for_end_of_homing() timed out...")
@@ -552,7 +588,7 @@ class SMC100:
         elif controller_state == ControllerState.READY_MOVING:
             moving: bool = False
         else:
-            raise InstrumentException("[EXCEPTION] unexpected controller state: {}...".format(controller_state))
+            raise InstrumentException(f"[EXCEPTION] unexpected controller state: {controller_state}...")
         return moving
 
     def wait_for_end_of_motion(self) -> None:
@@ -562,17 +598,24 @@ class SMC100:
 
         :return: None
         """
-        max_travel_distance: int = 12  # units of millimeters (mm)
-        velocity: float = self.get_velocity()  # units of millimeters per second (mm/s)
-        max_travel_time: float = max_travel_distance / velocity  # units of seconds (s)
-        timeout: float = 2 * max_travel_time  # make the timeout twice the max_travel_time
+        # max_travel_distance: int = 12  # units of millimeters (mm)
+        # velocity: float = self.get_velocity()  # units of millimeters per second (mm/s)
+        # max_travel_time: float = max_travel_distance / velocity  # units of seconds (s)
+        # timeout: float = 2 * max_travel_time  # make the timeout twice the max_travel_time
+
+        timeout: float = 10
+
         runtime: float = 0
-        start_time: float = time.time()
-        moving: bool = self.is_moving()
+        start_time: float = time.monotonic()
+        count: int = 0
+        # moving: bool = self.is_moving()
+        moving: bool = True
         while moving is True and runtime < timeout:
+            if count % 10 == 0:
+                logging.info(f"Is moving? : {moving}")
+            runtime: float = time.monotonic() - start_time
             moving: bool = self.is_moving()
-            runtime: float = time.time() - start_time
-            logging.debug(f"Is moving? : {moving}")
+            count += 1
         logging.info(f"Is moving? : {moving}")
         if runtime >= timeout:
             raise InstrumentException("[EXCEPTION] wait_for_end_of_motion() timed out...")
@@ -594,18 +637,29 @@ def main():
     :return: None
     """
     smc100: Optional[SMC100] = None
+
     try:
         smc100: SMC100 = SMC100(controller_address=1)
         smc100.connect(port="COM4")
         logging.info(f"Identity : {smc100.get_id()}")
 
-        smc100.initialize()
-        smc100.home(search_type=HomeSearchType.MZ_ONLY)
-        smc100.wait_for_end_of_homing()
+        smc100.get_controller_status()
 
-        # logging.info(f"Velocity : {smc100.get_velocity()}")
-        # logging.info(f"Acceleration : {smc100.get_acceleration()}")
-        #
+        positioner_error_code: str = smc100.positioner_error
+        logging.info(f"positioner_error_code (hexadecimal str) : {positioner_error_code}")
+        logging.info(f"positioner_error_code (int) : {int(positioner_error_code, 16)}")
+        logging.info(
+            "Positioner Error Readable : "
+            f"{smc100.get_positioner_errors_readable(error_code=int(positioner_error_code, 16))}"
+        )
+
+        controller_state: ControllerState = smc100.controller_state
+        logging.info(f"controller_state : {controller_state}")
+
+        # smc100.initialize()
+        # smc100.home(search_type=HomeSearchType.MZ_ONLY)
+        # smc100.wait_for_end_of_homing()
+
         # logging.info(f"Encoder Increment : {smc100.get_encoder_increment_value()}")
 
     except Exception as e:
